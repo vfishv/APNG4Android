@@ -41,6 +41,7 @@ public abstract class FrameSeqDecoder<R extends Reader, W extends Writer> {
     private final Handler workerHandler;
     protected List<Frame<R, W>> frames = new ArrayList<>();
     protected int frameIndex = -1;
+    protected static final double MB = 1024.0 * 1024.0;
     private int playCount;
     private Integer loopLimit = null;
     private final Set<RenderListener> renderListeners = new HashSet<>();
@@ -62,7 +63,9 @@ public abstract class FrameSeqDecoder<R extends Reader, W extends Writer> {
                 workerHandler.removeCallbacks(renderTask);
                 workerHandler.postDelayed(this, Math.max(0, delay - cost));
                 for (RenderListener renderListener : renderListeners) {
-                    renderListener.onRender(frameBuffer);
+                    if (frameBuffer != null) {
+                        renderListener.onRender(frameBuffer);
+                    }
                 }
             } else {
                 stop();
@@ -111,7 +114,7 @@ public abstract class FrameSeqDecoder<R extends Reader, W extends Writer> {
                         iterator.remove();
                         if ((ret.getWidth() != width || ret.getHeight() != height)) {
                             if (width > 0 && height > 0) {
-                                ret.reconfigure(width, height, Bitmap.Config.ARGB_8888);
+                                    ret.reconfigure(width, height, Bitmap.Config.ARGB_8888);
                             }
                         }
                         ret.eraseColor(0);
@@ -233,7 +236,7 @@ public abstract class FrameSeqDecoder<R extends Reader, W extends Writer> {
                             }
                             initCanvasBounds(read(mReader));
                         }
-                    } catch (Exception e) {
+                    } catch (Exception | OutOfMemoryError e) {
                         e.printStackTrace();
                         fullRect = RECT_EMPTY;
                     } finally {
@@ -248,15 +251,32 @@ public abstract class FrameSeqDecoder<R extends Reader, W extends Writer> {
 
     private void initCanvasBounds(Rect rect) {
         fullRect = rect;
-        frameBuffer = ByteBuffer.allocate((rect.width() * rect.height() / (getSampleSize() * getSampleSize()) + 1) * 4);
-        if (mWriter == null) {
-            mWriter = getWriter();
+        long bufferSize = ((long) rect.width() * rect.height() / ((long) sampleSize * sampleSize) + 1) * 4;
+
+        try {                
+            frameBuffer = ByteBuffer.allocate((int)bufferSize);
+            if (mWriter == null) {
+                mWriter = getWriter();
+            }
+        } catch (OutOfMemoryError error) {
+            Log.e(TAG, String.format(
+                    "OutOfMemoryError in FrameSeqDecoder: Buffer needed: %.2fMB (%,d bytes)",
+                    bufferSize / MB, bufferSize
+                )
+            );
+            frameBuffer = null;
+            fullRect = RECT_EMPTY;
+            throw error;
         }
     }
 
 
     public int getFrameCount() {
         return this.frames.size();
+    }
+
+    public int getFrameIndex() {
+        return frameIndex;
     }
 
     /**
